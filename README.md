@@ -1,5 +1,5 @@
 # Google-photos-without-album
-Python program that lists all URLs of google photos which are not in any album or archived and is not shared.
+Python program that lists all URLs of google photos which are not in any album or archived and are not shared.
 I know that this might be something that not so technical people also want, so I will try to make it simple with steps and images:
 
 How to use (as of 14/07/2024):
