@@ -47,7 +47,8 @@ How to use (as of 14/07/2024):
 21. Install pip for python, check a tutorial on how to do it
 22. Install "google-auth-oauthlib" and "google-api-python-client" with pip by running "pip install google-auth-oauthlib google-api-python-client". (you might need to put "--user" like so: "pip install --user google-auth-oauthlib google-api-python-client" if it doesn't work, I had an issue with it)
 23. With command line go to where the "pwa.py" is and execute it with python (look up a tutorial for this if this is not familiar to you)
-24. After it executes, it creates a file called "Images not in albums.txt", where each line contains a photo's link that is not in any album and is also not archived, but was uploaded/saved by you.
-25. Use that information for whatever you want to, also feel free to play around with the code to tailor it for your needs.
+24. When running the app for the first time, google will promt you to log in, allow all things requested and log in.
+25. After it executes, it creates a file called "Images not in albums.txt", where each line contains a photo's link that is not in any album and is also not archived, but was uploaded/saved by you.
+26. Use that information for whatever you want to, also feel free to play around with the code to tailor it for your needs.
 
 Feel free to provide feedback at fbenji2@gmail.com
