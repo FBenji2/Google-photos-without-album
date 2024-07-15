@@ -1,4 +1,6 @@
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -38,7 +40,7 @@ def create_service(client_secret_file, api_name, api_version, *scopes, prefix=''
     try:
         service = build(API_SERVICE_NAME, API_VERSION,
                         credentials=creds, static_discovery=False)
-        print(API_SERVICE_NAME, API_VERSION, 'service created successfully')
+        # print(API_SERVICE_NAME, API_VERSION, 'service created successfully')
         return service
     except Exception as e:
         print(e)
@@ -47,36 +49,28 @@ def create_service(client_secret_file, api_name, api_version, *scopes, prefix=''
         return None
 
 
-client_secret_file = "OAuth Client.json"
-API_NAME = "photoslibrary"
-API_VERSION = "v1"
-SCOPES = ["https://www.googleapis.com/auth/photoslibrary",
-          "https://www.googleapis.com/auth/photoslibrary.sharing"]
-service = create_service(client_secret_file, API_NAME, API_VERSION, SCOPES)
-
-#######################################################################################
-
-mediaItemsInAlbums = []
-mediaItemsNotInAlbums = []
-
-response = service.albums().list(pageSize=25).execute()
-albums = response["albums"]
-nextPageToken = response.get("nextPageToken")
-page = 1
-while nextPageToken:
-    page += 1
-    print(str(page) + " Fetching next page...")
-    response = service.albums().list(pageToken=nextPageToken).execute()
-    albums.extend(response["albums"])
+def getAlbumList(service):
+    response = service.albums().list(pageSize=25).execute()
+    albums = response["albums"]
     nextPageToken = response.get("nextPageToken")
+    page = 1
+    while nextPageToken:
+        page += 1
+        print(str(page) + " Fetching next page...")
+        response = service.albums().list(pageToken=nextPageToken).execute()
+        albums.extend(response["albums"])
+        nextPageToken = response.get("nextPageToken")
 
-for album in albums:
+    return albums
+
+
+def getImagesInAGivenAlbum_sync(service, album):
+    mediaItemsInAlbums = []
     page = 1
     searchbody = {
         "albumId": album["id"],
         "pageSize": 100,
     }
-    print(album["title"] + ": " + str(page) + " Fetching first page...")
     response = service.mediaItems().search(body=searchbody).execute()
     mediaItemsInAlbums.extend(response["mediaItems"])
     nextPageToken = response.get("nextPageToken")
@@ -88,44 +82,99 @@ for album in albums:
 
     while nextPageToken:
         page += 1
-        print(album["title"] + ": " + str(page) + " Fetching next page...")
         response = service.mediaItems().search(body=searchbody).execute()
         mediaItemsInAlbums.extend(response["mediaItems"])
         nextPageToken = response.get("nextPageToken")
         searchbody["pageToken"] = nextPageToken
-    print("-------------------------------------------")
 
-for i in range(len(mediaItemsInAlbums)):
-    mediaItemsInAlbums[i] = mediaItemsInAlbums[i]["id"]
+    for i in range(len(mediaItemsInAlbums)):
+        mediaItemsInAlbums[i] = mediaItemsInAlbums[i]["id"]
 
-print("An image exists in multiple albums: " +
-      str(len(mediaItemsInAlbums) != len(set(mediaItemsInAlbums))))
-print("Total number of images in albums: " + str(len(mediaItemsInAlbums)))
+    print(album["title"] + ": " +
+          str(len(mediaItemsInAlbums)) + " Image ids downloaded")
+    return mediaItemsInAlbums
 
 
-response = service.mediaItems().list(pageSize=100).execute()
-mediaItems = response["mediaItems"]
-nextPageToken = response.get("nextPageToken")
+async def getImagesInAGivenAlbum(album, executor):
+    client_secret_file = "OAuth Client.json"
+    API_NAME = "photoslibrary"
+    API_VERSION = "v1"
+    SCOPES = ["https://www.googleapis.com/auth/photoslibrary",
+              "https://www.googleapis.com/auth/photoslibrary.sharing"]
+    service = create_service(
+        client_secret_file, API_NAME, API_VERSION, SCOPES)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, getImagesInAGivenAlbum_sync, service, album)
 
-for mediaItem in mediaItems:
-    if mediaItem["id"] not in mediaItemsInAlbums:
-        mediaItemsNotInAlbums.extend(mediaItem["productUrl"])
 
-page = 1
-while nextPageToken:
-    page += 1
-    print(str(page) + " Fetching next page...")
-    response = service.mediaItems().list(
-        pageSize=100, pageToken=nextPageToken).execute()
+async def getImagesInAllAlbums(albumList):
+    # Adjust the number of workers as needed
+    executor = ThreadPoolExecutor(max_workers=len(albumList))
+    tasks = []
+    for album in albumList:
+        tasks.append(asyncio.create_task(
+            getImagesInAGivenAlbum(album, executor)))
+
+    results = await asyncio.gather(*tasks)
+    executor.shutdown(wait=True)
+    imagesInAllAlbums = []
+    for result in results:
+        imagesInAllAlbums += result
+    print("-------------------------------------------------------------------")
+    return imagesInAllAlbums
+
+
+async def main():
+    client_secret_file = "OAuth Client.json"
+    API_NAME = "photoslibrary"
+    API_VERSION = "v1"
+    SCOPES = ["https://www.googleapis.com/auth/photoslibrary",
+              "https://www.googleapis.com/auth/photoslibrary.sharing"]
+    main_service = create_service(
+        client_secret_file, API_NAME, API_VERSION, SCOPES)
+
+    #######################################################################################
+
+    mediaItemsNotInAlbums = []
+
+    albums = getAlbumList(service=main_service)
+    imagesInAllAlbums = await getImagesInAllAlbums(albums)
+
+    print("An image exists in multiple albums: " +
+          str(len(imagesInAllAlbums) != len(set(imagesInAllAlbums))))
+
+    if len(imagesInAllAlbums) != len(set(imagesInAllAlbums)):
+        print("Removing duplicate IDs... (this does not delete any images)")
+        imagesInAllAlbums = list(set(imagesInAllAlbums))
+    print("Total number of images in albums: " + str(len(imagesInAllAlbums)))
+    print("Fetching all images to compare with list of images in albums...")
+
+    response = main_service.mediaItems().list(pageSize=100).execute()
     mediaItems = response["mediaItems"]
     nextPageToken = response.get("nextPageToken")
 
     for mediaItem in mediaItems:
-        if mediaItem["id"] not in mediaItemsInAlbums:
+        if mediaItem["id"] not in imagesInAllAlbums:
             mediaItemsNotInAlbums.append(mediaItem["productUrl"])
 
-print("Number of images not in albums: " + str(len(mediaItemsNotInAlbums)))
+    page = 1
+    while nextPageToken:
+        page += 1
+        response = main_service.mediaItems().list(
+            pageSize=100, pageToken=nextPageToken).execute()
+        mediaItems = response["mediaItems"]
+        nextPageToken = response.get("nextPageToken")
 
-with open('Images not in albums.txt', 'w') as f:
-    for mediaItemNotInAlbums in mediaItemsNotInAlbums:
-        print(mediaItemNotInAlbums, file=f)
+        for mediaItem in mediaItems:
+            if mediaItem["id"] not in imagesInAllAlbums:
+                mediaItemsNotInAlbums.append(mediaItem["productUrl"])
+
+    print("Number of images not in albums: " + str(len(mediaItemsNotInAlbums)))
+
+    with open('Images not in albums.txt', 'w') as f:
+        for mediaItemNotInAlbums in mediaItemsNotInAlbums:
+            print(mediaItemNotInAlbums, file=f)
+
+asyncio.run(main())
+
+# TODO make the "getting all images" part async and quick as well
