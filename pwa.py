@@ -50,30 +50,39 @@ def create_service(client_secret_file, api_name, api_version, *scopes, prefix=''
 
 
 def getAlbumList(service):
+    print("Downloading album list...")
     response = service.albums().list(pageSize=25).execute()
     albums = response["albums"]
     nextPageToken = response.get("nextPageToken")
-    page = 1
+
     while nextPageToken:
-        page += 1
-        print(str(page) + " Fetching next page...")
         response = service.albums().list(pageToken=nextPageToken).execute()
         albums.extend(response["albums"])
         nextPageToken = response.get("nextPageToken")
 
-    return albums
+    for album in albums:
+        album["mediaItemsCount"] = int(album["mediaItemsCount"])
+
+    sortedAlbums = sorted(
+        albums, key=lambda d: d['mediaItemsCount'], reverse=True)
+
+    print("Album list downloaded.")
+    return sortedAlbums
 
 
 def getImagesInAGivenAlbum_sync(service, album):
-    mediaItemsInAlbums = []
-    page = 1
+    print("Album \"" + album["title"] +
+          "\": Downlading images' data...")
+
     searchbody = {
         "albumId": album["id"],
         "pageSize": 100,
     }
+
     response = service.mediaItems().search(body=searchbody).execute()
-    mediaItemsInAlbums.extend(response["mediaItems"])
+    mediaItemsInAlbums = response["mediaItems"]
     nextPageToken = response.get("nextPageToken")
+
     searchbody = {
         "albumId": album["id"],
         "pageSize": 100,
@@ -81,17 +90,13 @@ def getImagesInAGivenAlbum_sync(service, album):
     }
 
     while nextPageToken:
-        page += 1
         response = service.mediaItems().search(body=searchbody).execute()
         mediaItemsInAlbums.extend(response["mediaItems"])
         nextPageToken = response.get("nextPageToken")
         searchbody["pageToken"] = nextPageToken
 
-    for i in range(len(mediaItemsInAlbums)):
-        mediaItemsInAlbums[i] = mediaItemsInAlbums[i]["id"]
-
-    print(album["title"] + ": " +
-          str(len(mediaItemsInAlbums)) + " Image ids downloaded")
+    print("Album \"" + album["title"] + "\": " +
+          str(len(mediaItemsInAlbums)) + " image data downloaded.")
     return mediaItemsInAlbums
 
 
@@ -104,24 +109,55 @@ async def getImagesInAGivenAlbum(album, executor):
     service = create_service(
         client_secret_file, API_NAME, API_VERSION, SCOPES)
     loop = asyncio.get_event_loop()
+
     return await loop.run_in_executor(executor, getImagesInAGivenAlbum_sync, service, album)
 
 
-async def getImagesInAllAlbums(albumList):
+def getAll_sync(service):
+    print("Downloading all images' data...")
+    response = service.mediaItems().list(pageSize=100).execute()
+    mediaItems = response["mediaItems"]
+    nextPageToken = response.get("nextPageToken")
+
+    while nextPageToken:
+        response = service.mediaItems().list(
+            pageSize=100, pageToken=nextPageToken).execute()
+        mediaItems.extend(response["mediaItems"])
+        nextPageToken = response.get("nextPageToken")
+
+    print("Downloaded all images' data.")
+    return mediaItems
+
+
+async def getAll(executor):
+    client_secret_file = "OAuth Client.json"
+    API_NAME = "photoslibrary"
+    API_VERSION = "v1"
+    SCOPES = ["https://www.googleapis.com/auth/photoslibrary",
+              "https://www.googleapis.com/auth/photoslibrary.sharing"]
+    service = create_service(
+        client_secret_file, API_NAME, API_VERSION, SCOPES)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, getAll_sync, service)
+
+
+async def getAllImages(albumList):
     # Adjust the number of workers as needed
-    executor = ThreadPoolExecutor(max_workers=len(albumList))
+    executor = ThreadPoolExecutor(max_workers=len(albumList) + 1)
     tasks = []
+    tasks.append(asyncio.create_task(getAll(executor)))
     for album in albumList:
         tasks.append(asyncio.create_task(
             getImagesInAGivenAlbum(album, executor)))
 
     results = await asyncio.gather(*tasks)
     executor.shutdown(wait=True)
-    imagesInAllAlbums = []
-    for result in results:
-        imagesInAllAlbums += result
-    print("-------------------------------------------------------------------")
-    return imagesInAllAlbums
+    imagesInAlbums = []
+
+    for i in range(1, len(results)):
+        imagesInAlbums.extend(results[i])
+
+    return results[0], imagesInAlbums
 
 
 async def main():
@@ -135,46 +171,18 @@ async def main():
 
     #######################################################################################
 
-    mediaItemsNotInAlbums = []
-
     albums = getAlbumList(service=main_service)
-    imagesInAllAlbums = await getImagesInAllAlbums(albums)
 
-    print("An image exists in multiple albums: " +
-          str(len(imagesInAllAlbums) != len(set(imagesInAllAlbums))))
+    allImages, imagesInAlbums = await getAllImages(albums)
 
-    if len(imagesInAllAlbums) != len(set(imagesInAllAlbums)):
-        print("Removing duplicate IDs... (this does not delete any images)")
-        imagesInAllAlbums = list(set(imagesInAllAlbums))
-    print("Total number of images in albums: " + str(len(imagesInAllAlbums)))
-    print("Fetching all images to compare with list of images in albums...")
+    imageIdsInAlbums = {image["id"] for image in imagesInAlbums}
 
-    response = main_service.mediaItems().list(pageSize=100).execute()
-    mediaItems = response["mediaItems"]
-    nextPageToken = response.get("nextPageToken")
-
-    for mediaItem in mediaItems:
-        if mediaItem["id"] not in imagesInAllAlbums:
-            mediaItemsNotInAlbums.append(mediaItem["productUrl"])
-
-    page = 1
-    while nextPageToken:
-        page += 1
-        response = main_service.mediaItems().list(
-            pageSize=100, pageToken=nextPageToken).execute()
-        mediaItems = response["mediaItems"]
-        nextPageToken = response.get("nextPageToken")
-
-        for mediaItem in mediaItems:
-            if mediaItem["id"] not in imagesInAllAlbums:
-                mediaItemsNotInAlbums.append(mediaItem["productUrl"])
-
-    print("Number of images not in albums: " + str(len(mediaItemsNotInAlbums)))
-
+    print("Writing URLs for photos which are not in an album nor archived...")
     with open('Images not in albums.txt', 'w') as f:
-        for mediaItemNotInAlbums in mediaItemsNotInAlbums:
-            print(mediaItemNotInAlbums, file=f)
+        for image in allImages:
+            if image["id"] not in imageIdsInAlbums:
+                print(image["productUrl"], file=f)
+
+    print("Done, see \"Images not in albums\".txt at the same path as this program.")
 
 asyncio.run(main())
-
-# TODO make the "getting all images" part async and quick as well
