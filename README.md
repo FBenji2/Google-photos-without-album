@@ -2,6 +2,8 @@
 Python program that lists all URLs of google photos which are not in any album or archived and are not shared by another user.
 I know that this might be something that not so technical people also want, so I will try to make it simple with steps and images:
 
+If you had it set up but it started not working after some time with an error saying "bad request" and "invalid grant", then delete the token file that is next to the pwa.py file in a folder called "token files" or something with "token" in the name. This will prompt you to log in again, as I described it in step 24 below.
+
 How to use (as of 14/07/2024):
 1. Go to https://console.cloud.google.com/ and login with your google account
 2. Create a new project:
