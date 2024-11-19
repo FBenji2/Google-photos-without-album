@@ -56,12 +56,12 @@ def getAlbumList(service):
     nextPageToken = response.get("nextPageToken")
 
     while nextPageToken:
-        response = service.albums().list(pageToken=nextPageToken).execute()
-        albums.extend(response["albums"])
+        response = service.albums().list(pageSize=25, pageToken=nextPageToken).execute()
+        albums.extend(response.get("albums", []))
         nextPageToken = response.get("nextPageToken")
 
     for album in albums:
-        album["mediaItemsCount"] = int(album["mediaItemsCount"])
+        album["mediaItemsCount"] = int(album.get("mediaItemsCount", 0))
 
     sortedAlbums = sorted(
         albums, key=lambda d: d['mediaItemsCount'], reverse=True)
